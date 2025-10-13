@@ -1,0 +1,21 @@
+{
+  "name": "ai-translator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caraya/ai-translator.git"
+  },
+  "keywords": [],
+  "author": "Carlos Araya <carlos.araya@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/caraya/ai-translator/issues"
+  },
+  "homepage": "https://github.com/caraya/ai-translator#readme"
+}
