@@ -2,10 +2,48 @@ class LanguageTranslator extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    
+    // ---- START: FIX ----
+    // Wrap the worker initialization in a try...catch block.
+    // This prevents a bad path from stopping the entire component from rendering.
+    try {
+      this.worker = new Worker('./js/translator-worker.js', { type: 'module' });
+      
+      this.worker.onmessage = (event) => {
+        const { status, translatedText, message } = event.data;
+        const translatedContentEl = this.shadowRoot.querySelector('#translated-content');
+        if (!translatedContentEl) return;
+
+        if (status === 'loading-model') {
+          translatedContentEl.textContent = 'Loading fallback model (this may take a while)...';
+        } else if (status === 'translating') {
+          translatedContentEl.textContent = 'Translating with fallback model...';
+        } else if (status === 'success') {
+          translatedContentEl.textContent = translatedText;
+          console.timeEnd('Fallback Translation');
+        } else if (status === 'error') {
+          console.error('Worker translation failed:', message);
+          translatedContentEl.textContent = `Fallback translation failed: ${message}`;
+          console.timeEnd('Fallback Translation');
+        }
+      };
+    } catch (error) {
+      console.error("Failed to initialize the translation worker. Ensure the path is correct.", error);
+      // We set this.worker to null so other methods know it's not available.
+      this.worker = null;
+    }
+    // ---- END: FIX ----
   }
 
   connectedCallback() {
     this.render();
+    // If the worker failed to load, display an error message.
+    if (!this.worker) {
+        const translatedContentEl = this.shadowRoot.querySelector('#translated-content');
+        if(translatedContentEl) {
+            translatedContentEl.textContent = 'Error: The translation worker script could not be loaded.';
+        }
+    }
   }
   
   async translate() {
@@ -27,8 +65,10 @@ class LanguageTranslator extends HTMLElement {
     const selectElement = this.shadowRoot.querySelector('#language-select');
     const targetLanguage = selectElement.value;
     const translatedContentEl = this.shadowRoot.querySelector('#translated-content');
+    
+    const forceFallback = this.shadowRoot.querySelector('#force-fallback').checked;
 
-    if ('Translator' in self && 'LanguageDetector' in self) {
+    if (!forceFallback && 'Translator' in self && 'LanguageDetector' in self) {
       translatedContentEl.textContent = 'Checking for built-in translator...';
       try {
         const detector = await LanguageDetector.create();
@@ -44,93 +84,68 @@ class LanguageTranslator extends HTMLElement {
         
         const sourceLanguage = detectionResults[0].detectedLanguage;
 
-        translatedContentEl.textContent = 'Requesting translator. This may trigger a download...';
+        translatedContentEl.textContent = 'Preparing translation model...';
 
         const translator = await Translator.create({
           sourceLanguage,
           targetLanguage,
           monitor(m) {
-            translatedContentEl.textContent = 'Downloading translation model...';
             m.addEventListener('downloadprogress', (e) => {
               const percentage = (e.loaded / e.total) * 100;
-              console.log(`Downloading model: ${percentage.toFixed(2)}%`);
               translatedContentEl.textContent = `Downloading translation model: ${percentage.toFixed(0)}%`;
             });
           },
         });
 
-        // ---- START: STREAMING IMPLEMENTATION ----
-        translatedContentEl.textContent = 'Translating (streaming)...';
-        
-        // 1. Get the stream from the translator.
-        const stream = translator.translateStreaming(originalText);
-        
-        // 2. Clear the element and prepare to append chunks.
         translatedContentEl.textContent = ''; 
-        
-        // 3. Loop through the stream and append each chunk as it arrives.
+        const stream = translator.translateStreaming(originalText);
         for await (const chunk of stream) {
           translatedContentEl.textContent += chunk;
         }
-        // ---- END: STREAMING IMPLEMENTATION ----
 
       } catch (error) {
-        const message = `An error occurred with the built-in translator: ${error.message}`;
-        console.error('Built-in translation failed:', error);
-        translatedContentEl.textContent = message;
+        console.error('Built-in translation failed, falling back to worker:', error);
+        const detector = await LanguageDetector.create();
+        const detectionResults = await detector.detect(originalText);
+        const sourceLanguage = detectionResults[0].detectedLanguage;
+        this.fallbackTranslateWithWorker(originalText, sourceLanguage, targetLanguage);
       }
     } else {
-      const message = "The browser's built-in Translator API was not found.";
-      console.log(message);
-      translatedContentEl.textContent = message;
+      console.log("Using fallback translator (API not found or forced by user).");
+      this.fallbackTranslateWithWorker(originalText, null, targetLanguage);
     }
+  }
+  
+  fallbackTranslateWithWorker(text, sourceLanguage, targetLanguage) {
+    // If the worker failed to initialize, we can't proceed.
+    if (!this.worker) {
+        const translatedContentEl = this.shadowRoot.querySelector('#translated-content');
+        if (translatedContentEl) {
+            translatedContentEl.textContent = 'Fallback worker is not available.';
+        }
+        return;
+    }
+
+    const translatedContentEl = this.shadowRoot.querySelector('#translated-content');
+    if (translatedContentEl) {
+        translatedContentEl.textContent = 'Initializing fallback process...';
+    }
+    console.time('Fallback Translation'); 
+    this.worker.postMessage({ text, sourceLanguage, targetLanguage });
   }
 
   render() {
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          display: block;
-          font-family: sans-serif;
-          border: 1px solid #ccc;
-          padding: 16px;
-          border-radius: 8px;
-          max-width: 600px;
-        }
-        #controls {
-          margin-bottom: 16px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        h3 {
-          margin-top: 0;
-          margin-bottom: 8px;
-          color: #333;
-        }
-        p {
-          margin-top: 0;
-          color: #555;
-        }
-        #translated-content {
-          font-style: italic;
-          color: #333;
-        }
-        select {
-          padding: 4px 8px;
-          border-radius: 4px;
-        }
-        button {
-          padding: 6px 12px;
-          border: none;
-          background-color: #007bff;
-          color: white;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-        button:hover {
-          background-color: #0056b3;
-        }
+        :host { display: block; font-family: sans-serif; border: 1px solid #ccc; padding: 16px; border-radius: 8px; max-width: 600px; }
+        #controls { margin-bottom: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        h3 { margin-top: 0; margin-bottom: 8px; color: #333; }
+        p { margin-top: 0; color: #555; }
+        #translated-content { font-style: italic; color: #333; }
+        select, button { padding: 6px 12px; border-radius: 4px; border: 1px solid #ccc; }
+        button { border: none; background-color: #007bff; color: white; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .fallback-option { margin-top: 8px; display: flex; align-items: center; gap: 4px; font-size: 0.9em; width: 100%;}
       </style>
       <div id="controls">
         <label for="language-select">Translate to:</label>
@@ -139,8 +154,14 @@ class LanguageTranslator extends HTMLElement {
           <option value="fr">French</option>
           <option value="de">German</option>
           <option value="ja">Japanese</option>
+          <option value="uk">Ukrainian</option>
+          <option value="hi">Hindi</option>
         </select>
         <button id="translate-btn">Translate</button>
+        <div class="fallback-option">
+          <input type="checkbox" id="force-fallback">
+          <label for="force-fallback">Force fallback model</label>
+        </div>
       </div>
       <div>
         <h3>Original</h3>

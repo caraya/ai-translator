@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -17,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/caraya/ai-translator/issues"
   },
-  "homepage": "https://github.com/caraya/ai-translator#readme"
+  "homepage": "https://github.com/caraya/ai-translator#readme",
+  "dependencies": {
+    "vite": "^7.1.9"
+  }
 }
