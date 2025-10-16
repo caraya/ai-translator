@@ -1,55 +1,68 @@
 import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5/dist/transformers.min.js';
 
-let translator;
+let translatorPromise;
 
-// This map translates standard language codes to the NLLB model's required format.
+// This function starts the model loading process but can be called multiple times safely.
+function loadModel() {
+  if (!translatorPromise) {
+    console.log('Fallback model is loading in the background...');
+    translatorPromise = pipeline('translation', 'Xenova/nllb-200-distilled-600M');
+    translatorPromise.then(() => console.log('Fallback model loading complete.'));
+  }
+  return translatorPromise;
+}
+
 const langCodeMap = {
-  en: 'eng_Latn', // English
-  es: 'spa_Latn', // Spanish
-  fr: 'fra_Latn', // French
-  de: 'deu_Latn', // German
-  ja: 'jpn_Jpan', // Japanese
-  uk: 'ukr_Cyrl', // Ukrainian
-  hi: 'hin_Deva', // Hindi
+  en: 'eng_Latn',
+  es: 'spa_Latn',
+  fr: 'fra_Latn',
+  de: 'deu_Latn',
+  ja: 'jpn_Jpan',
+  uk: 'ukr_Cyrl',
+  hi: 'hin_Deva',
 };
 
 self.onmessage = async (event) => {
-  const { text, sourceLanguage, targetLanguage } = event.data;
+  const { type, text, sourceLanguage, targetLanguage } = event.data;
 
-  try {
-    self.postMessage({ status: 'loading-model' });
+  // Handle the two different message types.
+  switch (type) {
+    case 'PRELOAD':
+      // This just kicks off the download and doesn't wait for it.
+      loadModel();
+      break;
 
-    if (!translator) {
-      translator = await pipeline('translation', 'Xenova/nllb-200-distilled-600M');
-    }
+    case 'TRANSLATE':
+      try {
+        self.postMessage({ status: 'loading-model' });
 
-    self.postMessage({ status: 'translating' });
+        // This will either start the download or wait for the in-progress one.
+        const translator = await loadModel();
 
-    // ---- START: FIX ----
-    // 1. Look up the source language from the map.
-    // 2. If the lookup fails (because sourceLanguage is null or not in the map),
-    //    default to 'eng_Latn'.
-    const modelSourceLang = langCodeMap[sourceLanguage] || 'eng_Latn';
-    const modelTargetLang = langCodeMap[targetLanguage];
-    // ---- END: FIX ----
+        self.postMessage({ status: 'translating' });
 
-    if (!modelTargetLang) {
-      throw new Error(`The target language "${targetLanguage}" is not supported by the fallback model map.`);
-    }
+        const modelSourceLang = langCodeMap[sourceLanguage] || 'eng_Latn';
+        const modelTargetLang = langCodeMap[targetLanguage];
 
-    const [result] = await translator(text, {
-      src_lang: modelSourceLang, // This will now always have a valid value.
-      tgt_lang: modelTargetLang,
-    });
-    
-    self.postMessage({
-      status: 'success',
-      translatedText: result.translation_text,
-    });
-  } catch (error) {
-    self.postMessage({
-      status: 'error',
-      message: error.message,
-    });
+        if (!modelTargetLang) {
+          throw new Error(`The target language "${targetLanguage}" is not supported by the fallback model map.`);
+        }
+
+        const [result] = await translator(text, {
+          src_lang: modelSourceLang,
+          tgt_lang: modelTargetLang,
+        });
+
+        self.postMessage({
+          status: 'success',
+          translatedText: result.translation_text,
+        });
+      } catch (error) {
+        self.postMessage({
+          status: 'error',
+          message: error.message,
+        });
+      }
+      break;
   }
 };
